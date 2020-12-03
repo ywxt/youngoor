@@ -3,8 +3,9 @@ use reqwest::Url;
 
 #[async_trait]
 pub trait VideoSource {
+    fn pretty_name() -> String;
     async fn video_list(url: &Url) -> Vec<VideoInfo>;
-    fn host() -> &'static str;
+    fn valid(url: &Url) -> bool;
 }
 
 #[derive(Debug)]
