@@ -5,7 +5,7 @@ use reqwest::Url;
 
 #[async_trait]
 pub trait VideoSource {
-    fn pretty_name(&self) -> String;
+    fn pretty_name(&self) -> &'static str;
     async fn video_list(&self, url: &Url)
         -> Result<Vec<VideoInfo>, crate::error::VideoSourceError>;
     fn valid(&self, url: &Url) -> bool;
@@ -47,8 +47,8 @@ mod test {
         struct VideoSource1;
         #[async_trait]
         impl VideoSource for VideoSource1 {
-            fn pretty_name(&self) -> String {
-                "source1".to_string()
+            fn pretty_name(&self) -> &'static str {
+                "source1"
             }
 
             async fn video_list(
@@ -66,8 +66,8 @@ mod test {
         struct VideoSource2;
         #[async_trait]
         impl VideoSource for VideoSource2 {
-            fn pretty_name(&self) -> String {
-                "source2".to_string()
+            fn pretty_name(&self) -> &'static str {
+                "source2"
             }
 
             async fn video_list(
