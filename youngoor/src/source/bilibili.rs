@@ -2,8 +2,14 @@ use super::VideoInfo;
 use super::VideoSource;
 use crate::error::VideoSourceError;
 use async_trait::async_trait;
-use reqwest::Url;
+use reqwest::header::COOKIE;
+use reqwest::{StatusCode, Url};
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
+
+type Result<T> = std::result::Result<T, VideoSourceError>;
+
+const REQUEST_CIDS_URL: &str = "http://api.bilibili.com/x/player/pagelist";
 
 #[derive(Debug)]
 pub struct BilibiliSource {
@@ -17,7 +23,7 @@ impl VideoSource for BilibiliSource {
         "bilibili"
     }
 
-    async fn video_list(&self, url: &Url) -> Result<Vec<VideoInfo>, VideoSourceError> {
+    async fn video_list(&self, url: &Url) -> Result<Vec<VideoInfo>> {
         unimplemented!()
     }
 
@@ -34,6 +40,33 @@ impl VideoSource for BilibiliSource {
         } else {
             false
         }
+    }
+}
+
+impl BilibiliSource {
+    async fn request_cids(bvid: &str) -> Result<Vec<PInfo>> {}
+    async fn bilibili_http_get<T>(
+        &self,
+        mut url: Url,
+        params: &[(impl AsRef<str>, impl AsRef<str>)],
+        with_cookie: bool,
+    ) -> Result<T>
+    where
+        T: DeserializeOwned,
+    {
+        url.query_pairs_mut().extend_pairs(params);
+        let mut request = self.client.get(url.clone());
+        if with_cookie {
+            if let Some(cookie) = &self.cookie {
+                request = request.header(COOKIE, cookie);
+            }
+        }
+        let response = request.send().await?;
+        if response.status() != StatusCode::OK {
+            return Err(VideoSourceError::RequestError);
+        }
+        let object = response.json().await?;
+        Ok(object)
     }
 }
 
