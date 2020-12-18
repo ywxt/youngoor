@@ -6,8 +6,8 @@ pub enum VideoSourceError {
     ReqwestError(#[from] reqwest::Error),
     #[error("需要登录")]
     NeedLogin,
-    #[error("请求错误")]
-    RequestError,
-    #[error("找不到资源:{0}")]
+    #[error("请求错误: {0}")]
+    RequestError(String),
+    #[error("找不到资源: {0}")]
     NoSuchResource(String),
 }
