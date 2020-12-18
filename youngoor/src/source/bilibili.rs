@@ -5,7 +5,10 @@ use async_trait::async_trait;
 use reqwest::header::COOKIE;
 use reqwest::{RequestBuilder, StatusCode, Url};
 use serde::de::DeserializeOwned;
+use serde::export::fmt::Display;
+use serde::export::Formatter;
 use serde::{Deserialize, Serialize};
+use serde_repr::{Deserialize_repr, Serialize_repr};
 
 type Result<T> = std::result::Result<T, VideoSourceError>;
 
@@ -157,6 +160,72 @@ struct Dimension {
     /// - 0 :正常
     /// - 1 :宽高对换
     pub rotate: u8,
+}
+
+/// 获取下载地址时的分辨率
+#[derive(Serialize_repr, Deserialize_repr, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum DimensionCode {
+    P240 = 6,
+    P360 = 16,
+    P480 = 32,
+    P720 = 64,
+    P720F60 = 74,
+    P1080 = 80,
+    P1080P = 112,
+    P1080F60 = 116,
+    P4K = 120,
+}
+
+impl Display for DimensionCode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DimensionCode::P240 => f.write_str("240P 极速"),
+            DimensionCode::P360 => f.write_str("360P 流畅"),
+            DimensionCode::P480 => f.write_str("480P 清晰"),
+            DimensionCode::P720 => f.write_str("720P 高清（登录）"),
+            DimensionCode::P720F60 => f.write_str("720P60 高清（大会员）"),
+            DimensionCode::P1080 => f.write_str("1080P 高清（登录）"),
+            DimensionCode::P1080P => f.write_str("1080P+ 高清（大会员）"),
+            DimensionCode::P1080F60 => f.write_str("1080P60 高清（大会员）"),
+            DimensionCode::P4K => f.write_str("4K 超清（大会员）"),
+        }
+    }
+}
+
+/// 获取下载地址时的格式
+#[derive(Serialize_repr, Deserialize_repr, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum VideoTypeCode {
+    Flv1 = 0,
+    Mp4 = 1,
+    Flv2 = 2,
+    Dash = 16,
+}
+
+impl Display for VideoTypeCode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VideoTypeCode::Flv1 => f.write_str("FLV"),
+            VideoTypeCode::Mp4 => f.write_str("MP4"),
+            VideoTypeCode::Flv2 => f.write_str("FLV"),
+            VideoTypeCode::Dash => f.write_str("高清MP4"),
+        }
+    }
+}
+
+#[derive(Serialize, Debug)]
+struct VideoUrlRequest {
+    pub bvid: String,
+    pub cid: i32,
+    /// 分辨率
+    pub qn: DimensionCode,
+    /// 格式
+    pub fnval: VideoTypeCode,
+    /// 固定为0
+    pub fnver: i32,
+    /// 是否允许4K
+    pub fourk: i32,
 }
 
 #[cfg(test)]
