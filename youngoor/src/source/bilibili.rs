@@ -44,7 +44,14 @@ impl VideoSource for BilibiliSource {
 }
 
 impl BilibiliSource {
-    // async fn request_cids(bvid: &str) -> Result<Vec<PInfo>> {}
+    async fn request_cids(&self, bvid: &str) -> Result<Vec<PInfo>> {
+        let url = Url::parse(REQUEST_CIDS_URL).map_err(|_| {
+            VideoSourceError::RequestError(format!("无效的地址: {}", REQUEST_CIDS_URL))
+        })?;
+        self.bilibili_http_get(&url, &[("bvid", bvid)], false)
+            .await
+            .map(|op| op.unwrap_or_default())
+    }
     async fn bilibili_http_get<T>(
         &self,
         url: &Url,
@@ -185,5 +192,25 @@ mod test {
             .await;
         assert!(result.is_err());
         assert!(matches!(result, Err(VideoSourceError::RequestError(_))));
+    }
+
+    #[tokio::test]
+    async fn request_cids_test() {
+        let bilibili = BilibiliSource::default();
+        let result = bilibili.request_cids("BV1ex411J7G1").await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(VideoSourceError::NoSuchResource(_))));
+
+        let result = bilibili.request_cids("BVxxxxxx").await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(VideoSourceError::RequestError(_))));
+
+        let result = bilibili.request_cids("BV1ex411J7GE").await.unwrap();
+        assert_ne!(result.len(), 0);
+        assert_eq!(result[0].cid, 66445301);
+        assert_eq!(result[0].part, "00. 宣传短片");
+        assert_eq!(result[0].page, 1);
+        assert_eq!(result[1].cid, 35039663);
+        assert_eq!(result[1].part, "01. 火柴人与动画师");
     }
 }
