@@ -16,7 +16,8 @@ pub struct VideoInfo {
     pub pic: Url,
     pub title: String,
     pub video_type: VideoType,
-    pub videos: Vec<Url>,
+    pub video: Vec<Url>,
+    pub audio: Vec<Url>,
 }
 
 #[derive(Debug, Eq, PartialEq)]

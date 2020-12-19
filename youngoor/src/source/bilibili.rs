@@ -8,11 +8,13 @@ use serde::de::DeserializeOwned;
 use serde::export::fmt::Display;
 use serde::export::Formatter;
 use serde::{Deserialize, Serialize};
-use serde_repr::{Deserialize_repr, Serialize_repr};
+use std::borrow::Borrow;
+use std::collections::HashMap;
 
 type Result<T> = std::result::Result<T, VideoSourceError>;
 
 const REQUEST_CIDS_URL: &str = "http://api.bilibili.com/x/player/pagelist";
+const REQUEST_VIDEO_URL: &str = "http://api.bilibili.com/x/player/playurl";
 
 #[derive(Debug)]
 pub struct BilibiliSource {
@@ -26,7 +28,7 @@ impl VideoSource for BilibiliSource {
         "bilibili"
     }
 
-    async fn video_list(&self, url: &Url) -> Result<Vec<VideoInfo>> {
+    async fn video_list(&self, _url: &Url) -> Result<Vec<VideoInfo>> {
         unimplemented!()
     }
 
@@ -48,21 +50,81 @@ impl VideoSource for BilibiliSource {
 
 impl BilibiliSource {
     async fn request_cids(&self, bvid: &str) -> Result<Vec<PInfo>> {
-        let url = Url::parse(REQUEST_CIDS_URL).map_err(|_| {
-            VideoSourceError::RequestError(format!("无效的地址: {}", REQUEST_CIDS_URL))
-        })?;
-        self.bilibili_http_get(&url, &[("bvid", bvid)], false)
+        let url = Self::parse_url(REQUEST_CIDS_URL)?;
+        self.bilibili_http_get(&url, [("bvid", bvid)].iter(), false)
             .await
             .map(|op| op.unwrap_or_default())
     }
-    async fn bilibili_http_get<T>(
+    /// 返回`Result<(视频, 音频)>`
+    async fn request_video_url(
+        &self,
+        bvid: &str,
+        cid: i32,
+        vide_type: VideoTypeCode,
+        dimension: DimensionCode,
+    ) -> Result<(Vec<Url>, Vec<Url>)> {
+        let query_params: HashMap<_, _> = VideoUrlRequest {
+            bvid: bvid.to_string(),
+            cid,
+            fnver: 0,
+            fnval: vide_type,
+            qn: dimension,
+            fourk: 1,
+        }
+        .into();
+        let url = Self::parse_url(REQUEST_VIDEO_URL)?;
+        let result: Option<VideoUrlInfo> = self
+            .bilibili_http_get(&url, query_params.iter(), true)
+            .await?;
+        if result.is_none() {
+            return Err(VideoSourceError::NoSuchResource(format!("bvid={}", bvid)));
+        }
+        let result = result.unwrap();
+        if let Some(flv) = result.durl {
+            let video_url: Result<_> = flv
+                .into_iter()
+                .map(|durl| Self::parse_url(&durl.url))
+                .collect();
+            return Ok((video_url?, vec![]));
+        }
+        if let Some(dash) = result.dash {
+            let video_url = dash
+                .video
+                .into_iter()
+                .filter_map(|video| {
+                    if video.id == (dimension as i32) {
+                        Some(video.base_url)
+                    } else {
+                        None
+                    }
+                })
+                .next()
+                .ok_or_else(|| VideoSourceError::NoSuchResource(format!("bvid={}", bvid)))?;
+            let audio_url = dash
+                .audio
+                .into_iter()
+                .next()
+                .ok_or_else(|| VideoSourceError::NoSuchResource(format!("bvid={}", bvid)))?
+                .base_url;
+            return Ok((
+                vec![Self::parse_url(&video_url)?],
+                vec![Self::parse_url(&audio_url)?],
+            ));
+        }
+        Err(VideoSourceError::NoSuchResource(format!("bvid={}", bvid)))
+    }
+    async fn bilibili_http_get<T, I, K, V>(
         &self,
         url: &Url,
-        params: &[(impl AsRef<str>, impl AsRef<str>)],
+        params: I,
         with_cookie: bool,
     ) -> Result<Option<T>>
     where
         T: DeserializeOwned,
+        I: Iterator,
+        I::Item: Borrow<(K, V)>,
+        K: AsRef<str>,
+        V: AsRef<str>,
     {
         let mut url = url.clone();
         url.query_pairs_mut().extend_pairs(params);
@@ -111,6 +173,9 @@ impl BilibiliSource {
             -404 => Err(VideoSourceError::NoSuchResource(url)),
             _ => Err(VideoSourceError::RequestError(result.message)),
         }
+    }
+    fn parse_url(url: &str) -> Result<Url> {
+        Url::parse(url).map_err(|_| VideoSourceError::RequestError(format!("无效的地址: {}", url)))
     }
 }
 
@@ -163,8 +228,7 @@ struct Dimension {
 }
 
 /// 获取下载地址时的分辨率
-#[derive(Serialize_repr, Deserialize_repr, PartialEq, Eq, Debug)]
-#[repr(u8)]
+#[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum DimensionCode {
     P240 = 6,
     P360 = 16,
@@ -194,8 +258,7 @@ impl Display for DimensionCode {
 }
 
 /// 获取下载地址时的格式
-#[derive(Serialize_repr, Deserialize_repr, PartialEq, Eq, Debug)]
-#[repr(u8)]
+#[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum VideoTypeCode {
     Flv1 = 0,
     Mp4 = 1,
@@ -214,7 +277,8 @@ impl Display for VideoTypeCode {
     }
 }
 
-#[derive(Serialize, Debug)]
+/// 视频下载请求
+#[derive(Debug)]
 struct VideoUrlRequest {
     pub bvid: String,
     pub cid: i32,
@@ -228,6 +292,104 @@ struct VideoUrlRequest {
     pub fourk: i32,
 }
 
+impl From<VideoUrlRequest> for HashMap<&'static str, String> {
+    fn from(data: VideoUrlRequest) -> Self {
+        let mut map = HashMap::with_capacity(6);
+        map.insert("bvid", data.bvid);
+        map.insert("cid", data.cid.to_string());
+        map.insert("qn", (data.qn as u8).to_string());
+        map.insert("fnval", (data.fnval as u8).to_string());
+        map.insert("fnver", data.fnver.to_string());
+        map.insert("fourk", data.fourk.to_string());
+        map
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct VideoUrlInfo {
+    from: String,
+    result: String,
+    /// 分辨率
+    pub quality: i32,
+    /// 视频格式
+    pub format: String,
+    /// 视频长度
+    #[serde(rename = "camelCase")]
+    pub time_length: i32,
+    /// 视频支持的全部格式
+    pub accept_format: String,
+    /// 视频支持的分辨率列表
+    pub accept_description: Vec<String>,
+    /// 视频支持的分辨率代码列表
+    pub accept_quality: Vec<i32>,
+    vide_codecid: i32,
+    seek_param: String,
+    seek_type: String,
+    /// 视频分段
+    pub durl: Option<Vec<Durl>>,
+    /// dash音视频流信息
+    pub dash: Option<Dash>,
+}
+
+/// MP4,FLV格式返回
+#[derive(Debug, Deserialize)]
+struct Durl {
+    /// 序号
+    pub order: i32,
+    /// 时间
+    pub length: i32,
+    /// 字节大小
+    pub size: i32,
+    ahead: String,
+    vhead: String,
+    /// 地址，存在转义
+    pub url: String,
+    /// 备用地址，存在转义
+    pub backup_url: Vec<String>,
+}
+
+/// Dash 格式返回
+#[derive(Debug, Deserialize)]
+struct Dash {
+    duration: i32,
+    min_buffer_time: f32,
+    pub video: Vec<DashItem>,
+    pub audio: Vec<DashItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DashItem {
+    /// 音视频清晰度
+    pub id: i32,
+    /// 下载地址
+    pub base_url: String,
+    /// 备用地址
+    pub backup_url: Vec<String>,
+    /// 所需带宽
+    #[serde(rename = "camelCase")]
+    band_width: i32,
+    /// 媒体类型
+    mime_type: String,
+    /// 编码/音频类型
+    codecs: String,
+    /// 视频宽度
+    width: i32,
+    /// 视频高度
+    height: i32,
+    /// 视频帧率
+    frame_rate: String,
+    sar: String,
+    start_with_sap: i32,
+    segment_base: SegmentBase,
+    codecid: i32,
+}
+
+#[derive(Deserialize, Debug)]
+struct SegmentBase {
+    initialization: String,
+    index_range: String,
+}
+
 #[cfg(test)]
 mod test {
     use super::{BilibiliSource, PInfo, Result, REQUEST_CIDS_URL};
@@ -239,7 +401,7 @@ mod test {
         let bilibili = BilibiliSource::default();
         let url = Url::parse(REQUEST_CIDS_URL).unwrap();
         let result: Vec<PInfo> = bilibili
-            .bilibili_http_get(&url, &[("bvid", "BV1ex411J7GE")], false)
+            .bilibili_http_get(&url, [("bvid", "BV1ex411J7GE")].iter(), false)
             .await
             .unwrap()
             .unwrap();
@@ -251,13 +413,13 @@ mod test {
         assert_eq!(result[1].part, "01. 火柴人与动画师");
 
         let result: Result<Option<Vec<PInfo>>> = bilibili
-            .bilibili_http_get(&url, &[("bvid", "BV1ex411J7G1")], false)
+            .bilibili_http_get(&url, [("bvid", "BV1ex411J7G1")].iter(), false)
             .await;
         assert!(result.is_err());
         assert!(matches!(result, Err(VideoSourceError::NoSuchResource(_))));
 
         let result: Result<Option<Vec<PInfo>>> = bilibili
-            .bilibili_http_get(&url, &[("bvid", "BVxxxxxx")], false)
+            .bilibili_http_get(&url, [("bvid", "BVxxxxxx")].iter(), false)
             .await;
         assert!(result.is_err());
         assert!(matches!(result, Err(VideoSourceError::RequestError(_))));
