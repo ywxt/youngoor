@@ -46,6 +46,14 @@ impl VideoSource for BilibiliSource {
             false
         }
     }
+
+    fn set_token(&mut self, token: String) {
+        self.cookie = Some(token);
+    }
+
+    fn get_token(&self) -> Option<&str> {
+        self.cookie.as_deref()
+    }
 }
 
 impl BilibiliSource {

@@ -9,6 +9,9 @@ pub trait VideoSource {
     async fn video_list(&self, url: &Url)
         -> Result<Vec<VideoInfo>, crate::error::VideoSourceError>;
     fn valid(&self, url: &Url) -> bool;
+
+    fn set_token(&mut self, token: String);
+    fn get_token(&self) -> Option<&str>;
 }
 
 #[derive(Debug)]
@@ -62,6 +65,14 @@ mod test {
             fn valid(&self, _: &Url) -> bool {
                 unimplemented!()
             }
+
+            fn set_token(&mut self, token: String) {
+                unimplemented!()
+            }
+
+            fn get_token(&self) -> Option<&str> {
+                unimplemented!()
+            }
         }
         #[derive(Default)]
         struct VideoSource2;
@@ -79,6 +90,14 @@ mod test {
             }
 
             fn valid(&self, _: &Url) -> bool {
+                unimplemented!()
+            }
+
+            fn set_token(&mut self, token: String) {
+                unimplemented!()
+            }
+
+            fn get_token(&self) -> Option<&str> {
                 unimplemented!()
             }
         }
