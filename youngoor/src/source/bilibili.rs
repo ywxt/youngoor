@@ -378,7 +378,7 @@ struct DashItem {
     /// 备用地址
     pub backup_url: Vec<String>,
     /// 所需带宽
-    #[serde(rename(deserialize = "bandWidth"))]
+    #[serde(rename(deserialize = "bandwidth"))]
     band_width: i32,
     /// 媒体类型
     mime_type: String,
@@ -498,5 +498,23 @@ mod test {
         assert!(audio.is_empty());
         assert_eq!(video.len(), 1);
         assert!(video[0].host_str().unwrap().ends_with("bilivideo.com"));
+
+        let (video, audio) = bilibili
+            .request_video_url(
+                "BV1y7411Q7Eq",
+                171776208,
+                VideoTypeCode::Dash,
+                DimensionCode::P1080,
+            )
+            .await
+            .unwrap();
+        assert_eq!(audio.len(), 1);
+        assert!(audio[0].to_string().contains("bilivideo.com"));
+        assert_eq!(video.len(), 1);
+        let video = video[0].to_string();
+        assert!(
+            video.contains("bilivideo.com")
+                && (video.contains("30080.m4s") || video.contains("30077.m4s"))
+        );
     }
 }
