@@ -13,8 +13,8 @@ use std::collections::HashMap;
 
 type Result<T> = std::result::Result<T, VideoSourceError>;
 
-const REQUEST_CIDS_URL: &str = "http://api.bilibili.com/x/player/pagelist";
-const REQUEST_VIDEO_URL: &str = "http://api.bilibili.com/x/player/playurl";
+const REQUEST_CIDS_URL: &str = "https://api.bilibili.com/x/player/pagelist";
+const REQUEST_VIDEO_URL: &str = "https://api.bilibili.com/x/player/playurl";
 
 #[derive(Debug)]
 pub struct BilibiliSource {
