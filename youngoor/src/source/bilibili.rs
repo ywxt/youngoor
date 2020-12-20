@@ -19,7 +19,7 @@ const REQUEST_VIDEO_URL: &str = "http://api.bilibili.com/x/player/playurl";
 #[derive(Debug)]
 pub struct BilibiliSource {
     client: reqwest::Client,
-    cookie: Option<String>,
+    pub cookie: Option<String>,
 }
 
 #[async_trait]
@@ -74,7 +74,7 @@ impl BilibiliSource {
         .into();
         let url = Self::parse_url(REQUEST_VIDEO_URL)?;
         let result: Option<VideoUrlInfo> = self
-            .bilibili_http_get(&url, query_params.iter(), true)
+            .bilibili_http_get(&url, query_params.iter(), dimension.need_login())
             .await?;
         if result.is_none() {
             return Err(VideoSourceError::NoSuchResource(format!("bvid={}", bvid)));
@@ -129,7 +129,7 @@ impl BilibiliSource {
         let mut url = url.clone();
         url.query_pairs_mut().extend_pairs(params);
         let mut request = self.client.get(url.clone());
-        request = self.wrap_cookie(request, with_cookie);
+        request = self.wrap_cookie(request, with_cookie)?;
         let result = Self::http_request(request).await?;
         Self::wrap_response(result).await
     }
@@ -140,7 +140,7 @@ impl BilibiliSource {
         with_cookie: bool,
     ) -> Result<Option<T>> {
         let mut request = self.client.post(url.clone()).json(body);
-        request = self.wrap_cookie(request, with_cookie);
+        request = self.wrap_cookie(request, with_cookie)?;
         let result = Self::http_request(request).await?;
         Self::wrap_response(result).await
     }
@@ -156,13 +156,16 @@ impl BilibiliSource {
         }
         Ok(response)
     }
-    fn wrap_cookie(&self, mut request: RequestBuilder, with_cookie: bool) -> RequestBuilder {
+    fn wrap_cookie(&self, request: RequestBuilder, with_cookie: bool) -> Result<RequestBuilder> {
         if with_cookie {
             if let Some(cookie) = &self.cookie {
-                request = request.header(COOKIE, cookie);
+                Ok(request.header(COOKIE, cookie))
+            } else {
+                Err(VideoSourceError::NeedLogin)
             }
+        } else {
+            Ok(request)
         }
-        request
     }
     async fn wrap_response<T: DeserializeOwned>(response: reqwest::Response) -> Result<Option<T>> {
         let url = response.url().to_string();
@@ -241,6 +244,15 @@ pub enum DimensionCode {
     P4K = 120,
 }
 
+impl DimensionCode {
+    pub fn need_login(&self) -> bool {
+        !matches!(
+            self,
+            DimensionCode::P240 | DimensionCode::P360 | DimensionCode::P480
+        )
+    }
+}
+
 impl Display for DimensionCode {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -314,7 +326,7 @@ struct VideoUrlInfo {
     /// 视频格式
     pub format: String,
     /// 视频长度
-    #[serde(rename = "camelCase")]
+    #[serde(rename(deserialize = "timelength"))]
     pub time_length: i32,
     /// 视频支持的全部格式
     pub accept_format: String,
@@ -322,7 +334,7 @@ struct VideoUrlInfo {
     pub accept_description: Vec<String>,
     /// 视频支持的分辨率代码列表
     pub accept_quality: Vec<i32>,
-    vide_codecid: i32,
+    video_codecid: i32,
     seek_param: String,
     seek_type: String,
     /// 视频分段
@@ -366,7 +378,7 @@ struct DashItem {
     /// 备用地址
     pub backup_url: Vec<String>,
     /// 所需带宽
-    #[serde(rename = "camelCase")]
+    #[serde(rename(deserialize = "bandWidth"))]
     band_width: i32,
     /// 媒体类型
     mime_type: String,
@@ -394,6 +406,7 @@ struct SegmentBase {
 mod test {
     use super::{BilibiliSource, PInfo, Result, REQUEST_CIDS_URL};
     use crate::error::VideoSourceError;
+    use crate::source::bilibili::{DimensionCode, VideoTypeCode};
     use reqwest::Url;
 
     #[tokio::test]
@@ -443,5 +456,47 @@ mod test {
         assert_eq!(result[0].page, 1);
         assert_eq!(result[1].cid, 35039663);
         assert_eq!(result[1].part, "01. 火柴人与动画师");
+    }
+
+    #[tokio::test]
+    async fn request_video_url_test() {
+        let mut bilibili = BilibiliSource::default();
+        let (video, audio) = bilibili
+            .request_video_url(
+                "BV1y7411Q7Eq",
+                171776208,
+                VideoTypeCode::Flv1,
+                DimensionCode::P480,
+            )
+            .await
+            .unwrap();
+        assert!(audio.is_empty());
+        assert_eq!(video.len(), 1);
+        assert!(video[0].host_str().unwrap().ends_with("bilivideo.com"));
+
+        assert!(matches!(
+            bilibili
+                .request_video_url(
+                    "BV1y7411Q7Eq",
+                    171776208,
+                    VideoTypeCode::Flv1,
+                    DimensionCode::P1080,
+                )
+                .await,
+            Err(VideoSourceError::NeedLogin)
+        ));
+        bilibili.cookie = Some(std::env::var("BILIBILI_COOKIE").unwrap());
+        let (video, audio) = bilibili
+            .request_video_url(
+                "BV1y7411Q7Eq",
+                171776208,
+                VideoTypeCode::Flv1,
+                DimensionCode::P1080,
+            )
+            .await
+            .unwrap();
+        assert!(audio.is_empty());
+        assert_eq!(video.len(), 1);
+        assert!(video[0].host_str().unwrap().ends_with("bilivideo.com"));
     }
 }
