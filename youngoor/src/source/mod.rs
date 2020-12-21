@@ -66,7 +66,7 @@ mod test {
                 unimplemented!()
             }
 
-            fn set_token(&mut self, token: String) {
+            fn set_token(&mut self, _token: String) {
                 unimplemented!()
             }
 
@@ -93,7 +93,7 @@ mod test {
                 unimplemented!()
             }
 
-            fn set_token(&mut self, token: String) {
+            fn set_token(&mut self, _token: String) {
                 unimplemented!()
             }
 

@@ -15,6 +15,7 @@ type Result<T> = std::result::Result<T, VideoSourceError>;
 
 const REQUEST_CIDS_URL: &str = "https://api.bilibili.com/x/player/pagelist";
 const REQUEST_VIDEO_URL: &str = "https://api.bilibili.com/x/player/playurl";
+const REQUEST_SSID_BY_MDID_URL: &str = "https://api.bilibili.com/pgc/review/user";
 
 #[derive(Debug)]
 pub struct BilibiliSource {
@@ -59,9 +60,18 @@ impl VideoSource for BilibiliSource {
 impl BilibiliSource {
     async fn request_video_cids(&self, bvid: &str) -> Result<Vec<PInfo>> {
         let url = Self::parse_url(REQUEST_CIDS_URL)?;
-        self.bilibili_http_get(&url, [("bvid", bvid)].iter(), self.cookie.is_some())
+        self.bilibili_http_get_not_null(&url, [("bvid", bvid)].iter(), self.cookie.is_some())
             .await
-            .map(|op| op.unwrap_or_default())
+    }
+    /// 请求剧集ssid
+    async fn request_bangumi_ssid(&self, media_id: i32) -> Result<i32> {
+        let mut query_param = HashMap::new();
+        query_param.insert("media_id", media_id.to_string());
+        let url = Self::parse_url(REQUEST_SSID_BY_MDID_URL)?;
+        let result: BangumiInfo = self
+            .bilibili_http_get_not_null(&url, query_param.iter(), self.cookie.is_some())
+            .await?;
+        Ok(result.media.season_id)
     }
     /// 返回`Result<(视频, 音频)>`
     async fn request_video_url(
@@ -81,13 +91,9 @@ impl BilibiliSource {
         }
         .into();
         let url = Self::parse_url(REQUEST_VIDEO_URL)?;
-        let result: Option<VideoUrlInfo> = self
-            .bilibili_http_get(&url, query_params.iter(), dimension.need_login())
+        let result: VideoUrlInfo = self
+            .bilibili_http_get_not_null(&url, query_params.iter(), dimension.need_login())
             .await?;
-        if result.is_none() {
-            return Err(VideoSourceError::NoSuchResource(format!("bvid={}", bvid)));
-        }
-        let result = result.unwrap();
         if let Some(flv) = result.durl {
             let video_url: Result<_> = flv
                 .into_iter()
@@ -121,14 +127,40 @@ impl BilibiliSource {
         }
         Err(VideoSourceError::NoSuchResource(format!("bvid={}", bvid)))
     }
-    async fn bilibili_http_get<T, I, K, V>(
+
+    async fn bilibili_http_get_not_null<T, I, K, V>(
         &self,
         url: &Url,
         params: I,
         with_cookie: bool,
-    ) -> Result<Option<T>>
+    ) -> Result<T>
     where
         T: DeserializeOwned,
+        I: Iterator,
+        I::Item: Borrow<(K, V)>,
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
+        let response = self.bilibili_http_get(url, params, with_cookie).await?;
+        Self::wrap_response_not_null(response).await
+    }
+    async fn bilibili_http_post_not_null<B: Serialize + ?Sized, T: DeserializeOwned>(
+        &self,
+        url: &Url,
+        body: &B,
+        with_cookie: bool,
+    ) -> Result<T> {
+        let response = self.bilibili_http_post(url, body, with_cookie).await?;
+        Self::wrap_response_not_null(response).await
+    }
+
+    async fn bilibili_http_get<I, K, V>(
+        &self,
+        url: &Url,
+        params: I,
+        with_cookie: bool,
+    ) -> Result<reqwest::Response>
+    where
         I: Iterator,
         I::Item: Borrow<(K, V)>,
         K: AsRef<str>,
@@ -138,19 +170,17 @@ impl BilibiliSource {
         url.query_pairs_mut().extend_pairs(params);
         let mut request = self.client.get(url.clone());
         request = self.wrap_cookie(request, with_cookie)?;
-        let result = Self::http_request(request).await?;
-        Self::wrap_response(result).await
+        Self::http_request(request).await
     }
-    async fn bilibili_http_post<B: Serialize + ?Sized, T: DeserializeOwned>(
+    async fn bilibili_http_post<B: Serialize + ?Sized>(
         &self,
         url: &Url,
         body: &B,
         with_cookie: bool,
-    ) -> Result<Option<T>> {
+    ) -> Result<reqwest::Response> {
         let mut request = self.client.post(url.clone()).json(body);
         request = self.wrap_cookie(request, with_cookie)?;
-        let result = Self::http_request(request).await?;
-        Self::wrap_response(result).await
+        Self::http_request(request).await
     }
     async fn http_request(request: RequestBuilder) -> Result<reqwest::Response> {
         let response = request.send().await?;
@@ -175,15 +205,24 @@ impl BilibiliSource {
             Ok(request)
         }
     }
-    async fn wrap_response<T: DeserializeOwned>(response: reqwest::Response) -> Result<Option<T>> {
+    async fn wrap_response_null<T: DeserializeOwned>(
+        response: reqwest::Response,
+    ) -> Result<Option<T>> {
         let url = response.url().to_string();
         let result: Response<T> = response.json().await?;
+        // assert!(result.data.is_some());
         match result.code {
             0 => Ok(result.data),
             -400 => Err(VideoSourceError::RequestError(result.message)),
             -404 => Err(VideoSourceError::NoSuchResource(url)),
             _ => Err(VideoSourceError::RequestError(result.message)),
         }
+    }
+    async fn wrap_response_not_null<T: DeserializeOwned>(response: reqwest::Response) -> Result<T> {
+        let url = response.url().clone().to_string();
+        let result = Self::wrap_response_null(response).await?;
+        //assert!(result.is_some());
+        result.ok_or(VideoSourceError::NoSuchResource(url))
     }
     fn parse_url(url: &str) -> Result<Url> {
         Url::parse(url).map_err(|_| VideoSourceError::RequestError(format!("无效的地址: {}", url)))
@@ -204,7 +243,8 @@ impl Default for BilibiliSource {
 struct Response<T> {
     pub code: i32,
     pub message: String,
-    ttl: i32,
+    // ttl: i32,
+    #[serde(alias = "data", alias = "result")]
     pub data: Option<T>,
 }
 
@@ -410,40 +450,37 @@ struct SegmentBase {
     index_range: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct BangumiInfo {
+    pub media: MediaInfo,
+}
+
+/// 剧集基本信息（mdID方式）
+#[derive(Debug, Deserialize)]
+struct MediaInfo {
+    pub cover: String,
+    pub media_id: i32,
+    pub season_id: i32,
+    pub title: String,
+}
+
 #[cfg(test)]
 mod test {
-    use super::{BilibiliSource, PInfo, Result, REQUEST_CIDS_URL};
+    use super::{BilibiliSource, REQUEST_CIDS_URL};
     use crate::error::VideoSourceError;
     use crate::source::bilibili::{DimensionCode, VideoTypeCode};
-    use reqwest::Url;
+    use crate::source::VideoSource;
+    use reqwest::{StatusCode, Url};
 
     #[tokio::test]
     async fn bilibili_http_get_test() {
         let bilibili = BilibiliSource::default();
         let url = Url::parse(REQUEST_CIDS_URL).unwrap();
-        let result: Vec<PInfo> = bilibili
+        let result = bilibili
             .bilibili_http_get(&url, [("bvid", "BV1ex411J7GE")].iter(), false)
             .await
-            .unwrap()
             .unwrap();
-        assert_ne!(result.len(), 0);
-        assert_eq!(result[0].cid, 66445301);
-        assert_eq!(result[0].part, "00. 宣传短片");
-        assert_eq!(result[0].page, 1);
-        assert_eq!(result[1].cid, 35039663);
-        assert_eq!(result[1].part, "01. 火柴人与动画师");
-
-        let result: Result<Option<Vec<PInfo>>> = bilibili
-            .bilibili_http_get(&url, [("bvid", "BV1ex411J7G1")].iter(), false)
-            .await;
-        assert!(result.is_err());
-        assert!(matches!(result, Err(VideoSourceError::NoSuchResource(_))));
-
-        let result: Result<Option<Vec<PInfo>>> = bilibili
-            .bilibili_http_get(&url, [("bvid", "BVxxxxxx")].iter(), false)
-            .await;
-        assert!(result.is_err());
-        assert!(matches!(result, Err(VideoSourceError::RequestError(_))));
+        assert_eq!(result.status(), StatusCode::OK);
     }
 
     #[tokio::test]
@@ -493,7 +530,7 @@ mod test {
                 .await,
             Err(VideoSourceError::NeedLogin)
         ));
-        bilibili.cookie = Some(std::env::var("BILIBILI_COOKIE").unwrap());
+        bilibili.set_token(std::env::var("BILIBILI_COOKIE").unwrap());
         let (video, audio) = bilibili
             .request_video_url(
                 "BV1y7411Q7Eq",
@@ -538,6 +575,17 @@ mod test {
         assert!(
             video.contains("bilivideo.com")
                 && (video.contains("30080.m4s") || video.contains("30077.m4s"))
+        );
+    }
+
+    #[tokio::test]
+    async fn request_bangumi_ssid_test() {
+        let bilibili = BilibiliSource::default();
+        //bilibili.set_token(std::env::var("BILIBILI_COOKIE").unwrap());
+        assert_eq!(bilibili.request_bangumi_ssid(5978).await.unwrap(), 5978);
+        assert_eq!(
+            bilibili.request_bangumi_ssid(28229053).await.unwrap(),
+            33624,
         );
     }
 }
