@@ -1,13 +1,9 @@
-use super::VideoInfo;
-use super::VideoSource;
+use super::{VideoInfoStream, VideoSource};
 use crate::error::VideoSourceError;
-use async_trait::async_trait;
-use reqwest::header::COOKIE;
-use reqwest::{RequestBuilder, StatusCode, Url};
-use serde::de::DeserializeOwned;
-use serde::export::fmt::Display;
-use serde::export::Formatter;
-use serde::{Deserialize, Serialize};
+use reqwest::{header::COOKIE, RequestBuilder, StatusCode, Url};
+use serde::{
+    de::DeserializeOwned, export::fmt::Display, export::Formatter, Deserialize, Serialize,
+};
 use std::borrow::Borrow;
 use std::collections::HashMap;
 
@@ -24,13 +20,12 @@ pub struct BilibiliSource {
     pub cookie: Option<String>,
 }
 
-#[async_trait]
 impl VideoSource for BilibiliSource {
     fn pretty_name(&self) -> &'static str {
         "bilibili"
     }
 
-    async fn video_list(&self, _url: &Url) -> Result<Vec<VideoInfo>> {
+    fn video_list(&self, _url: &Url) -> VideoInfoStream<'_> {
         unimplemented!()
     }
 

@@ -1,13 +1,14 @@
 pub mod bilibili;
 
-use async_trait::async_trait;
+use futures::stream::BoxStream;
 use reqwest::Url;
 
-#[async_trait]
+pub type VideoInfoStream<'a> =
+    BoxStream<'a, Result<Vec<VideoInfo>, crate::error::VideoSourceError>>;
+
 pub trait VideoSource {
     fn pretty_name(&self) -> &'static str;
-    async fn video_list(&self, url: &Url)
-        -> Result<Vec<VideoInfo>, crate::error::VideoSourceError>;
+    fn video_list(&self, url: &Url) -> VideoInfoStream<'_>;
     fn valid(&self, url: &Url) -> bool;
 
     fn set_token(&mut self, token: String);
@@ -40,25 +41,19 @@ macro_rules! video_sources {
 
 #[cfg(test)]
 mod test {
-    use super::VideoSource;
-    use crate::source::VideoInfo;
-    use async_trait::async_trait;
+    use super::{VideoInfoStream, VideoSource};
     use reqwest::Url;
 
     #[test]
     fn video_sources_test() {
         #[derive(Default)]
         struct VideoSource1;
-        #[async_trait]
         impl VideoSource for VideoSource1 {
             fn pretty_name(&self) -> &'static str {
                 "source1"
             }
 
-            async fn video_list(
-                &self,
-                _: &Url,
-            ) -> Result<Vec<VideoInfo>, crate::error::VideoSourceError> {
+            fn video_list(&self, _: &Url) -> VideoInfoStream<'_> {
                 unimplemented!()
             }
 
@@ -76,16 +71,12 @@ mod test {
         }
         #[derive(Default)]
         struct VideoSource2;
-        #[async_trait]
         impl VideoSource for VideoSource2 {
             fn pretty_name(&self) -> &'static str {
                 "source2"
             }
 
-            async fn video_list(
-                &self,
-                _: &Url,
-            ) -> Result<Vec<VideoInfo>, crate::error::VideoSourceError> {
+            fn video_list(&self, _: &Url) -> VideoInfoStream<'_> {
                 unimplemented!()
             }
 
