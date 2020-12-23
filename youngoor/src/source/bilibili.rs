@@ -66,11 +66,7 @@ impl BilibiliSource {
     }
     /// 请求剧集ssid
     async fn request_bangumi_ssid(&self, media_id: i32) -> Result<i32> {
-        let query_param = {
-            let mut query_param = HashMap::new();
-            query_param.insert("media_id", media_id.to_string());
-            query_param
-        };
+        let query_param = [("media_id", media_id.to_string())];
         let url = Self::parse_url(REQUEST_SSID_BY_MDID_URL)?;
         let result: BangumiInfo = self
             .bilibili_http_get_not_null(&url, query_param.iter(), self.cookie.is_some())
@@ -79,11 +75,7 @@ impl BilibiliSource {
     }
     async fn request_bangumi_info(&self, ssid: i32) -> Result<Vec<Episode>> {
         let url = Self::parse_url(REQUEST_BANGUMI_INFO_URL)?;
-        let query_param = {
-            let mut query_param = HashMap::new();
-            query_param.insert("season_id", ssid.to_string());
-            query_param
-        };
+        let query_param = [("season_id", ssid.to_string())];
         let result: EpisodesInfo = self
             .bilibili_http_get_not_null(&url, query_param.iter(), self.cookie.is_some())
             .await?;
