@@ -13,9 +13,10 @@ use std::collections::HashMap;
 
 type Result<T> = std::result::Result<T, VideoSourceError>;
 
-const REQUEST_CIDS_URL: &str = "https://api.bilibili.com/x/player/pagelist";
+const REQUEST_VIDEO_INFO_URL: &str = "https://api.bilibili.com/x/player/pagelist";
 const REQUEST_VIDEO_URL: &str = "https://api.bilibili.com/x/player/playurl";
 const REQUEST_SSID_BY_MDID_URL: &str = "https://api.bilibili.com/pgc/review/user";
+const REQUEST_BANGUMI_INFO_URL: &str = "https://api.bilibili.com/pgc/view/web/season";
 
 #[derive(Debug)]
 pub struct BilibiliSource {
@@ -58,20 +59,35 @@ impl VideoSource for BilibiliSource {
 }
 
 impl BilibiliSource {
-    async fn request_video_cids(&self, bvid: &str) -> Result<Vec<PInfo>> {
-        let url = Self::parse_url(REQUEST_CIDS_URL)?;
+    async fn request_video_info(&self, bvid: &str) -> Result<Vec<PInfo>> {
+        let url = Self::parse_url(REQUEST_VIDEO_INFO_URL)?;
         self.bilibili_http_get_not_null(&url, [("bvid", bvid)].iter(), self.cookie.is_some())
             .await
     }
     /// 请求剧集ssid
     async fn request_bangumi_ssid(&self, media_id: i32) -> Result<i32> {
-        let mut query_param = HashMap::new();
-        query_param.insert("media_id", media_id.to_string());
+        let query_param = {
+            let mut query_param = HashMap::new();
+            query_param.insert("media_id", media_id.to_string());
+            query_param
+        };
         let url = Self::parse_url(REQUEST_SSID_BY_MDID_URL)?;
         let result: BangumiInfo = self
             .bilibili_http_get_not_null(&url, query_param.iter(), self.cookie.is_some())
             .await?;
         Ok(result.media.season_id)
+    }
+    async fn request_bangumi_info(&self, ssid: i32) -> Result<Vec<Episode>> {
+        let url = Self::parse_url(REQUEST_BANGUMI_INFO_URL)?;
+        let query_param = {
+            let mut query_param = HashMap::new();
+            query_param.insert("season_id", ssid.to_string());
+            query_param
+        };
+        let result: EpisodesInfo = self
+            .bilibili_http_get_not_null(&url, query_param.iter(), self.cookie.is_some())
+            .await?;
+        Ok(result.episodes)
     }
     /// 返回`Result<(视频, 音频)>`
     async fn request_video_url(
@@ -464,9 +480,37 @@ struct MediaInfo {
     pub title: String,
 }
 
+/// 具体分集信息
+#[derive(Debug, Deserialize)]
+struct EpisodesInfo {
+    /// 分集
+    pub episodes: Vec<Episode>,
+    /// 简介
+    pub evaluate: String,
+
+    pub media_id: i32,
+    pub season_id: i32,
+    pub title: String,
+}
+
+/// 分集
+#[derive(Debug, Deserialize)]
+struct Episode {
+    pub bvid: String,
+    pub cid: i32,
+    /// 封面
+    pub cover: String,
+    /// 单集epid
+    pub id: i32,
+    /// 单集完整标题
+    pub long_title: String,
+    /// 单集标题
+    pub title: String,
+}
+
 #[cfg(test)]
 mod test {
-    use super::{BilibiliSource, REQUEST_CIDS_URL};
+    use super::{BilibiliSource, REQUEST_VIDEO_INFO_URL};
     use crate::error::VideoSourceError;
     use crate::source::bilibili::{DimensionCode, VideoTypeCode};
     use crate::source::VideoSource;
@@ -475,7 +519,7 @@ mod test {
     #[tokio::test]
     async fn bilibili_http_get_test() {
         let bilibili = BilibiliSource::default();
-        let url = Url::parse(REQUEST_CIDS_URL).unwrap();
+        let url = Url::parse(REQUEST_VIDEO_INFO_URL).unwrap();
         let result = bilibili
             .bilibili_http_get(&url, [("bvid", "BV1ex411J7GE")].iter(), false)
             .await
@@ -486,15 +530,15 @@ mod test {
     #[tokio::test]
     async fn request_cids_test() {
         let bilibili = BilibiliSource::default();
-        let result = bilibili.request_video_cids("BV1ex411J7G1").await;
+        let result = bilibili.request_video_info("BV1ex411J7G1").await;
         assert!(result.is_err());
         assert!(matches!(result, Err(VideoSourceError::NoSuchResource(_))));
 
-        let result = bilibili.request_video_cids("BVxxxxxx").await;
+        let result = bilibili.request_video_info("BVxxxxxx").await;
         assert!(result.is_err());
         assert!(matches!(result, Err(VideoSourceError::RequestError(_))));
 
-        let result = bilibili.request_video_cids("BV1ex411J7GE").await.unwrap();
+        let result = bilibili.request_video_info("BV1ex411J7GE").await.unwrap();
         assert_ne!(result.len(), 0);
         assert_eq!(result[0].cid, 66445301);
         assert_eq!(result[0].part, "00. 宣传短片");
@@ -587,5 +631,19 @@ mod test {
             bilibili.request_bangumi_ssid(28229053).await.unwrap(),
             33624,
         );
+    }
+
+    #[tokio::test]
+    async fn request_bangumi_info_test() {
+        let bilibili = BilibiliSource::default();
+        let result = bilibili.request_bangumi_info(33624).await.unwrap();
+        assert_eq!(result.len(), 36);
+        assert_eq!(result[0].cid, 200063835);
+        assert_eq!(result[0].long_title, "林黛玉别父进京都");
+
+        let result = bilibili.request_bangumi_info(5978).await.unwrap();
+        assert!(!result.is_empty());
+        assert_eq!(result[0].cid, 15915981);
+        assert_eq!(result[0].long_title, "漩涡博人");
     }
 }
