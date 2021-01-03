@@ -1,10 +1,11 @@
 pub mod bilibili;
 
+use crate::error::VideoSourceError;
 use futures::stream::BoxStream;
 use reqwest::Url;
 
-pub type VideoInfoStream<'a> =
-    BoxStream<'a, Result<Vec<VideoInfo>, crate::error::VideoSourceError>>;
+pub type Result<T> = std::result::Result<T, VideoSourceError>;
+pub type VideoInfoStream<'a> = BoxStream<'a, Result<VideoInfo>>;
 
 pub trait VideoSource {
     fn pretty_name(&self) -> &'static str;

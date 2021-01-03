@@ -1,4 +1,4 @@
-use super::{VideoInfoStream, VideoSource};
+use super::{Result, VideoInfoStream, VideoSource};
 use crate::error::VideoSourceError;
 use reqwest::{header::COOKIE, RequestBuilder, StatusCode, Url};
 use serde::{
@@ -6,8 +6,6 @@ use serde::{
 };
 use std::borrow::Borrow;
 use std::collections::HashMap;
-
-type Result<T> = std::result::Result<T, VideoSourceError>;
 
 const REQUEST_VIDEO_INFO_URL: &str = "https://api.bilibili.com/x/player/pagelist";
 const REQUEST_VIDEO_URL: &str = "https://api.bilibili.com/x/player/playurl";
@@ -20,28 +18,28 @@ pub struct BilibiliSource {
     pub cookie: Option<String>,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+enum UrlType {
+    Video(String),
+    Bangumi(i32),
+    InvalidUrl,
+}
+
 impl VideoSource for BilibiliSource {
     fn pretty_name(&self) -> &'static str {
         "bilibili"
     }
 
-    fn video_list(&self, _url: &Url) -> VideoInfoStream<'_> {
-        unimplemented!()
+    fn video_list(&self, url: &Url) -> VideoInfoStream<'_> {
+        if !self.valid(url) {
+            return Box::pin(futures::stream::once(async {
+                Err(VideoSourceError::InvalidUrl(url.clone()))
+            }));
+        }
     }
 
     fn valid(&self, url: &Url) -> bool {
-        if let Some(host) = url.host_str() {
-            let is_host = host.eq_ignore_ascii_case("www.bilibili.com")
-                || host.eq_ignore_ascii_case("bilibili.com");
-            let is_path = {
-                let path = url.path().to_ascii_lowercase();
-                path.starts_with("/video/") // 视频
-                    || path.starts_with("/bangumi/") // 剧集
-            };
-            is_host && is_path
-        } else {
-            false
-        }
+        Self::url_type(url) != UrlType::InvalidUrl
     }
 
     fn set_token(&mut self, token: String) {
@@ -229,6 +227,54 @@ impl BilibiliSource {
     }
     fn parse_url(url: &str) -> Result<Url> {
         Url::parse(url).map_err(|_| VideoSourceError::RequestError(format!("无效的地址: {}", url)))
+    }
+
+    fn url_type(url: &Url) -> UrlType {
+        if let Some(host) = url.host_str() {
+            let is_host = host.eq_ignore_ascii_case("www.bilibili.com")
+                || host.eq_ignore_ascii_case("bilibili.com");
+            if is_host {
+                return UrlType::InvalidUrl;
+            }
+            if let Some(mut path) = url.path_segments() {
+                match path.next() {
+                    Some("video") => {
+                        return if let Some(bvid) = path.next() {
+                            if bvid.starts_with("BV") {
+                                UrlType::Video(bvid.to_string())
+                            } else {
+                                UrlType::InvalidUrl
+                            }
+                        } else {
+                            UrlType::InvalidUrl
+                        }
+                    }
+                    Some("bangumi") => match path.next() {
+                        _ => UrlType::InvalidUrl,
+                        Some("media") => match path.next() {
+                            _ => UrlType::InvalidUrl,
+                            Some(media_id) => {
+                                if media_id.starts_with("md") {
+                                    let id: std::result::Result<i32, _> =
+                                        media_id.strip_prefix("md").unwrap_or("no id").parse();
+                                    match id {
+                                        Ok(id) => UrlType::Bangumi(id),
+                                        _ => UrlType::InvalidUrl,
+                                    }
+                                } else {
+                                    UrlType::InvalidUrl
+                                }
+                            }
+                        },
+                    },
+                    _ => UrlType::InvalidUrl,
+                }
+            } else {
+                UrlType::InvalidUrl
+            }
+        } else {
+            UrlType::InvalidUrl
+        }
     }
 }
 

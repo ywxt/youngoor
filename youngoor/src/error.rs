@@ -1,4 +1,5 @@
 use thiserror::Error;
+use reqwest::Url;
 
 #[derive(Error, Debug)]
 pub enum VideoSourceError {
@@ -10,4 +11,6 @@ pub enum VideoSourceError {
     RequestError(String),
     #[error("找不到资源: {0}")]
     NoSuchResource(String),
+    #[error("无效的链接: {0}")]
+    InvalidUrl(Url),
 }
