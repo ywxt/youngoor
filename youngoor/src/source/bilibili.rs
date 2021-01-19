@@ -1,11 +1,10 @@
 use super::{Result, VideoInfoStream, VideoSource};
 use crate::error::VideoSourceError;
 use reqwest::{header::COOKIE, RequestBuilder, StatusCode, Url};
-use serde::{
-    de::DeserializeOwned, export::fmt::Display, export::Formatter, Deserialize, Serialize,
-};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
 
 const REQUEST_VIDEO_INFO_URL: &str = "https://api.bilibili.com/x/player/pagelist";
 const REQUEST_VIDEO_URL: &str = "https://api.bilibili.com/x/player/playurl";
@@ -20,7 +19,9 @@ pub struct BilibiliSource {
 
 #[derive(Debug, Eq, PartialEq)]
 enum UrlType {
+    /// BV ID
     Video(String),
+    /// media id
     Bangumi(i32),
     InvalidUrl,
 }
@@ -31,11 +32,12 @@ impl VideoSource for BilibiliSource {
     }
 
     fn video_list(&self, url: &Url) -> VideoInfoStream<'_> {
-        if !self.valid(url) {
-            return Box::pin(futures::stream::once(async {
-                Err(VideoSourceError::InvalidUrl(url.clone()))
-            }));
-        }
+        // if !self.valid(url) {
+        //     return Box::pin(futures::stream::once(async {
+        //         Err(VideoSourceError::InvalidUrl(url.clone()))
+        //     }));
+        // }
+        unimplemented!()
     }
 
     fn valid(&self, url: &Url) -> bool {
@@ -233,13 +235,13 @@ impl BilibiliSource {
         if let Some(host) = url.host_str() {
             let is_host = host.eq_ignore_ascii_case("www.bilibili.com")
                 || host.eq_ignore_ascii_case("bilibili.com");
-            if is_host {
+            if !is_host {
                 return UrlType::InvalidUrl;
             }
             if let Some(mut path) = url.path_segments() {
                 match path.next() {
                     Some("video") => {
-                        return if let Some(bvid) = path.next() {
+                        if let Some(bvid) = path.next() {
                             if bvid.starts_with("BV") {
                                 UrlType::Video(bvid.to_string())
                             } else {
@@ -250,9 +252,7 @@ impl BilibiliSource {
                         }
                     }
                     Some("bangumi") => match path.next() {
-                        _ => UrlType::InvalidUrl,
                         Some("media") => match path.next() {
-                            _ => UrlType::InvalidUrl,
                             Some(media_id) => {
                                 if media_id.starts_with("md") {
                                     let id: std::result::Result<i32, _> =
@@ -265,7 +265,9 @@ impl BilibiliSource {
                                     UrlType::InvalidUrl
                                 }
                             }
+                            _ => UrlType::InvalidUrl,
                         },
+                        _ => UrlType::InvalidUrl,
                     },
                     _ => UrlType::InvalidUrl,
                 }
@@ -545,9 +547,10 @@ struct Episode {
 mod test {
     use super::{BilibiliSource, REQUEST_VIDEO_INFO_URL};
     use crate::error::VideoSourceError;
-    use crate::source::bilibili::{DimensionCode, VideoTypeCode};
+    use crate::source::bilibili::{DimensionCode, UrlType, VideoTypeCode};
     use crate::source::VideoSource;
     use reqwest::{StatusCode, Url};
+    use std::convert::TryInto;
 
     #[tokio::test]
     async fn bilibili_http_get_test() {
@@ -678,5 +681,33 @@ mod test {
         assert!(!result.is_empty());
         assert_eq!(result[0].cid, 15915981);
         assert_eq!(result[0].long_title, "漩涡博人");
+    }
+
+    #[test]
+    fn url_type_test() {
+        assert_eq!(
+            BilibiliSource::url_type(
+                &"https://www.bilibili.com/video/BVXXXXXX"
+                    .try_into()
+                    .unwrap()
+            ),
+            UrlType::Video("BVXXXXXX".to_string())
+        );
+        assert_eq!(
+            BilibiliSource::url_type(
+                &"https://www.bilibili.com/bangumi/media/md28229053"
+                    .parse()
+                    .unwrap()
+            ),
+            UrlType::Bangumi(28229053)
+        );
+        assert_eq!(
+            BilibiliSource::url_type(
+                &"https://www.bilibili.com/bangumi/play/ep327884"
+                    .parse()
+                    .unwrap()
+            ),
+            UrlType::InvalidUrl
+        );
     }
 }
