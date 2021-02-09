@@ -13,7 +13,7 @@ pub trait VideoSource {
     fn valid(&self, url: &Url) -> bool;
 
     fn set_token(&mut self, token: String);
-    fn get_token(&self) -> Option<&str>;
+    fn token(&self) -> Option<&str>;
 }
 
 #[derive(Debug)]
@@ -66,7 +66,7 @@ mod test {
                 unimplemented!()
             }
 
-            fn get_token(&self) -> Option<&str> {
+            fn token(&self) -> Option<&str> {
                 unimplemented!()
             }
         }
@@ -89,7 +89,7 @@ mod test {
                 unimplemented!()
             }
 
-            fn get_token(&self) -> Option<&str> {
+            fn token(&self) -> Option<&str> {
                 unimplemented!()
             }
         }
