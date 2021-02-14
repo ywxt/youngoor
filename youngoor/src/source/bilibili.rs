@@ -23,7 +23,6 @@ enum UrlType {
     Video(String),
     /// media id
     Bangumi(i32),
-    InvalidUrl,
 }
 
 impl VideoSource for BilibiliSource {
@@ -31,7 +30,7 @@ impl VideoSource for BilibiliSource {
         "bilibili"
     }
 
-    fn video_list(&self, url: &Url) -> VideoInfoStream<'_> {
+    fn video_list(&self, url: &Url) -> Result<VideoInfoStream<'_>> {
         // if !self.valid(url) {
         //     return Box::pin(futures::stream::once(async {
         //         Err(VideoSourceError::InvalidUrl(url.clone()))
@@ -41,7 +40,7 @@ impl VideoSource for BilibiliSource {
     }
 
     fn valid(&self, url: &Url) -> bool {
-        Self::url_type(url) != UrlType::InvalidUrl
+        Self::url_type(url).is_some()
     }
 
     fn set_token(&mut self, token: String) {
@@ -231,51 +230,38 @@ impl BilibiliSource {
         Url::parse(url).map_err(|_| VideoSourceError::RequestError(format!("无效的地址: {}", url)))
     }
 
-    fn url_type(url: &Url) -> UrlType {
-        if let Some(host) = url.host_str() {
-            let is_host = host.eq_ignore_ascii_case("www.bilibili.com")
-                || host.eq_ignore_ascii_case("bilibili.com");
-            if !is_host {
-                return UrlType::InvalidUrl;
-            }
-            if let Some(mut path) = url.path_segments() {
-                match path.next() {
-                    Some("video") => {
-                        if let Some(bvid) = path.next() {
-                            if bvid.starts_with("BV") {
-                                UrlType::Video(bvid.to_string())
-                            } else {
-                                UrlType::InvalidUrl
-                            }
-                        } else {
-                            UrlType::InvalidUrl
-                        }
-                    }
-                    Some("bangumi") => match path.next() {
-                        Some("media") => match path.next() {
-                            Some(media_id) => {
-                                if media_id.starts_with("md") {
-                                    let id: std::result::Result<i32, _> =
-                                        media_id.strip_prefix("md").unwrap_or("no id").parse();
-                                    match id {
-                                        Ok(id) => UrlType::Bangumi(id),
-                                        _ => UrlType::InvalidUrl,
-                                    }
-                                } else {
-                                    UrlType::InvalidUrl
-                                }
-                            }
-                            _ => UrlType::InvalidUrl,
-                        },
-                        _ => UrlType::InvalidUrl,
-                    },
-                    _ => UrlType::InvalidUrl,
+    fn url_type(url: &Url) -> Option<UrlType> {
+        let host = url.host_str()?;
+        let is_host = host.eq_ignore_ascii_case("www.bilibili.com")
+            || host.eq_ignore_ascii_case("bilibili.com");
+        if !is_host {
+            return None;
+        }
+        let mut path = url.path_segments()?;
+        match path.next() {
+            Some("video") => {
+                let bvid = path.next()?;
+                if bvid.starts_with("BV") {
+                    Some(UrlType::Video(bvid.to_string()))
+                } else {
+                    None
                 }
-            } else {
-                UrlType::InvalidUrl
             }
-        } else {
-            UrlType::InvalidUrl
+
+            Some("bangumi") => match path.next() {
+                Some("media") => {
+                    let media_id = path.next()?;
+                    if media_id.starts_with("md") {
+                        let id: std::result::Result<i32, _> =
+                            media_id.strip_prefix("md").unwrap_or("no id").parse();
+                        id.ok().map(|id| UrlType::Bangumi(id))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
         }
     }
 }
@@ -691,7 +677,7 @@ mod test {
                     .try_into()
                     .unwrap()
             ),
-            UrlType::Video("BVXXXXXX".to_string())
+            Some(UrlType::Video("BVXXXXXX".to_string()))
         );
         assert_eq!(
             BilibiliSource::url_type(
@@ -699,7 +685,7 @@ mod test {
                     .parse()
                     .unwrap()
             ),
-            UrlType::Bangumi(28229053)
+            Some(UrlType::Bangumi(28229053))
         );
         assert_eq!(
             BilibiliSource::url_type(
@@ -707,7 +693,7 @@ mod test {
                     .parse()
                     .unwrap()
             ),
-            UrlType::InvalidUrl
+            None
         );
     }
 }

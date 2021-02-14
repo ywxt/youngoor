@@ -9,7 +9,7 @@ pub type VideoInfoStream<'a> = BoxStream<'a, Result<VideoInfo>>;
 
 pub trait VideoSource {
     fn pretty_name(&self) -> &'static str;
-    fn video_list(&self, url: &Url) -> VideoInfoStream<'_>;
+    fn video_list(&self, url: &Url) -> Result<VideoInfoStream<'_>>;
     fn valid(&self, url: &Url) -> bool;
 
     fn set_token(&mut self, token: String);
@@ -42,7 +42,7 @@ macro_rules! video_sources {
 
 #[cfg(test)]
 mod test {
-    use super::{VideoInfoStream, VideoSource};
+    use super::{Result, VideoInfoStream, VideoSource};
     use reqwest::Url;
 
     #[test]
@@ -54,7 +54,7 @@ mod test {
                 "source1"
             }
 
-            fn video_list(&self, _: &Url) -> VideoInfoStream<'_> {
+            fn video_list(&self, url: &Url) -> Result<VideoInfoStream<'_>> {
                 unimplemented!()
             }
 
@@ -77,7 +77,7 @@ mod test {
                 "source2"
             }
 
-            fn video_list(&self, _: &Url) -> VideoInfoStream<'_> {
+            fn video_list(&self, url: &Url) -> Result<VideoInfoStream<'_>> {
                 unimplemented!()
             }
 
