@@ -254,7 +254,7 @@ impl BilibiliSource {
                     if media_id.starts_with("md") {
                         let id: std::result::Result<i32, _> =
                             media_id.strip_prefix("md").unwrap_or("no id").parse();
-                        id.ok().map(|id| UrlType::Bangumi(id))
+                        id.ok().map(UrlType::Bangumi)
                     } else {
                         None
                     }
