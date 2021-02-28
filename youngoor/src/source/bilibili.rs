@@ -31,11 +31,9 @@ impl VideoSource for BilibiliSource {
     }
 
     fn video_list(&self, url: &Url) -> Result<VideoInfoStream<'_>> {
-        // if !self.valid(url) {
-        //     return Box::pin(futures::stream::once(async {
-        //         Err(VideoSourceError::InvalidUrl(url.clone()))
-        //     }));
-        // }
+        if !self.valid(url) {
+            return Err(VideoSourceError::InvalidUrl(url.to_owned()));
+        }
         unimplemented!()
     }
 
