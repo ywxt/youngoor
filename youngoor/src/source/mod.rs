@@ -18,14 +18,15 @@ pub trait VideoSource {
 
 #[derive(Debug)]
 pub struct VideoInfo {
-    pub pic: Url,
+    pub pic: Option<Url>,
     pub title: String,
     pub video_type: VideoType,
+    pub dimension: i32,
     pub video: Vec<Url>,
     pub audio: Vec<Url>,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub enum VideoType {
     Flv,
     MP4,
