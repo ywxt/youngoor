@@ -3,6 +3,8 @@ use reqwest::Url;
 
 #[derive(Error, Debug)]
 pub enum VideoSourceError {
+    #[error("无效的Api数据: {0}")]
+    InvalidApiData(String),
     #[error("错误: {0}")]
     ReqwestError(#[from] reqwest::Error),
     #[error("需要登录")]

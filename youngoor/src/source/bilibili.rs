@@ -1,6 +1,6 @@
 use super::{Result, VideoInfo, VideoInfoStream, VideoSource, VideoType};
 use crate::error::VideoSourceError;
-use futures::Stream;
+use futures::{future::BoxFuture, Stream};
 use reqwest::{header::COOKIE, RequestBuilder, StatusCode, Url};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -38,13 +38,64 @@ impl VideoSource for BilibiliSource {
         "bilibili"
     }
 
-    fn video_list(&self, url: &Url) -> Result<VideoInfoStream<'_>> {
-        if !self.valid(url) {
-            return Err(VideoSourceError::InvalidUrl(url.to_owned()));
-        }
-        unimplemented!()
+    fn video_list(
+        &self,
+        url: &Url,
+        video_type: VideoType,
+        dimension: i32,
+    ) -> BoxFuture<'_, Result<VideoInfoStream<'_>>> {
+        Box::pin(async {
+            match Self::url_type(url) {
+                Some(UrlType::Bangumi(media_id)) => {
+                    let ssid = self.0.request_bangumi_ssid(media_id).await?;
+                    let episodes = self.0.request_bangumi_info(ssid).await?;
+                    let play_list: VecDeque<BilibiliSourceItem> = episodes
+                        .into_iter()
+                        .map(|episode| {
+                            Ok(BilibiliSourceItem {
+                                bvid: episode.bvid,
+                                cid: episode.cid,
+                                pic: Some(Url::parse(&episode.cover).map_err(|_| {
+                                    VideoSourceError::InvalidApiData(format!(
+                                        "视频地址错误: bvid={},cid={}",
+                                        episode.bvid, episode.cid
+                                    ))
+                                })?),
+                                title: episode.title,
+                                video_type,
+                            })
+                        })
+                        .collect()?;
+                    Ok(BilibiliSourceStream::new(
+                        play_list,
+                        video_type.into(),
+                        dimension.into(),
+                        Arc::new(self.0.clone()),
+                    ))
+                }
+                Some(UrlType::Video(bvid)) => {
+                    let videos = self.0.request_video_info(&bvid).await?;
+                    let play_list: VecDeque<BilibiliSourceItem> = videos
+                        .into_iter()
+                        .map(|p_info| BilibiliSourceItem {
+                            bvid: bvid.clone(),
+                            cid: p_info,
+                            pic: None,
+                            title: p_info.part,
+                            video_type,
+                        })
+                        .collect();
+                    Ok(BilibiliSourceStream::new(
+                        play_list,
+                        video_type.into(),
+                        dimension.into(),
+                        Arc::new(self.0.clone()),
+                    ))
+                }
+                None => Err(VideoSourceError::InvalidUrl(url.to_owned())),
+            }
+        })
     }
-
     fn valid(&self, url: &Url) -> bool {
         Self::url_type(url).is_some()
     }
@@ -364,6 +415,23 @@ impl Display for DimensionCode {
     }
 }
 
+impl From<i32> for DimensionCode {
+    fn from(dimension: i32) -> Self {
+        match dimension {
+            6 => Self::P240,
+            16 => Self::P360,
+            32 => Self::P480,
+            64 => Self::P720,
+            74 => Self::P720F60,
+            80 => Self::P1080,
+            112 => Self::P1080P,
+            116 => Self::P1080F60,
+            120 => Self::P4K,
+            _ => Self::P720,
+        }
+    }
+}
+
 /// 获取下载地址时的格式
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum VideoTypeCode {
@@ -391,6 +459,14 @@ impl From<VideoTypeCode> for VideoType {
             VideoTypeCode::Mp4 => Self::MP4,
             VideoTypeCode::Flv2 => Self::Flv,
             VideoTypeCode::Dash => Self::MP4,
+        }
+    }
+}
+impl From<VideoType> for VideoTypeCode {
+    fn from(video_type: VideoType) -> Self {
+        match video_type {
+            VideoType::Flv => Self::Flv2,
+            VideoType::MP4 => Self::Dash,
         }
     }
 }
@@ -563,6 +639,22 @@ struct BilibiliSourceStream {
     dimension: DimensionCode,
     client: Arc<BilibiliClient>,
     future: Option<Pin<Box<dyn Future<Output = Result<VideoInfo>>>>>,
+}
+impl BilibiliSourceStream {
+    fn new(
+        play_list: VecDeque<BilibiliSourceItem>,
+        video_type: VideoTypeCode,
+        dimension: DimensionCode,
+        client: Arc<BilibiliClient>,
+    ) -> Self {
+        Self {
+            play_list,
+            video_type,
+            dimension,
+            client,
+            future: None,
+        }
+    }
 }
 impl Stream for BilibiliSourceStream {
     type Item = Result<VideoInfo>;
