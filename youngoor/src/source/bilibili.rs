@@ -1,15 +1,12 @@
 use super::{Result, VideoInfo, VideoInfoStream, VideoSource, VideoType};
 use crate::error::VideoSourceError;
-use futures::{future::BoxFuture, Stream};
+
 use reqwest::{header::COOKIE, RequestBuilder, StatusCode, Url};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{Display, Formatter};
-use std::future::Future;
-use std::pin::Pin;
-use std::task;
-use std::task::{Context, Poll};
-use std::{borrow::Borrow, sync::Arc};
+
+use std::borrow::Borrow;
 
 const REQUEST_VIDEO_INFO_URL: &str = "https://api.bilibili.com/x/player/pagelist";
 const REQUEST_VIDEO_URL: &str = "https://api.bilibili.com/x/player/playurl";
@@ -38,62 +35,64 @@ impl VideoSource for BilibiliSource {
         "bilibili"
     }
 
-    fn video_list(
-        &self,
-        url: &Url,
-        video_type: VideoType,
-        dimension: i32,
-    ) -> BoxFuture<'_, Result<VideoInfoStream<'_>>> {
-        Box::pin(async {
-            match Self::url_type(url) {
-                Some(UrlType::Bangumi(media_id)) => {
+    fn video_list(&self, url: &Url, video_type: VideoType, dimension: i32) -> VideoInfoStream<'_> {
+        use async_stream::try_stream;
+        let url = url.clone();
+        Box::pin(try_stream! {
+            let play_list =  match Self::url_type(&url) {
+                Some(UrlType::Bangumi(media_id)) =>{
+                    use std::iter::IntoIterator;
+                    use std::iter::Iterator;
                     let ssid = self.0.request_bangumi_ssid(media_id).await?;
                     let episodes = self.0.request_bangumi_info(ssid).await?;
                     let play_list: VecDeque<BilibiliSourceItem> = episodes
-                        .into_iter()
-                        .map(|episode| {
-                            Ok(BilibiliSourceItem {
-                                bvid: episode.bvid,
-                                cid: episode.cid,
-                                pic: Some(Url::parse(&episode.cover).map_err(|_| {
-                                    VideoSourceError::InvalidApiData(format!(
-                                        "视频地址错误: bvid={},cid={}",
-                                        episode.bvid, episode.cid
-                                    ))
-                                })?),
-                                title: episode.title,
-                                video_type,
-                            })
+                    .into_iter()
+                    .map(|episode| {
+                        Ok::<_,VideoSourceError>(BilibiliSourceItem {
+                            bvid: episode.bvid.clone(),
+                            cid: episode.cid,
+                            pic: Some(Url::parse(&episode.cover).map_err(|_| {
+                                VideoSourceError::InvalidApiData(format!(
+                                    "视频地址错误: bvid={},cid={}",
+                                    episode.bvid, episode.cid
+                                ))
+                            })?),
+                            title: format!("{} {}",episode.title, episode.long_title),
+                            video_type,
                         })
-                        .collect()?;
-                    Ok(BilibiliSourceStream::new(
-                        play_list,
-                        video_type.into(),
-                        dimension.into(),
-                        Arc::new(self.0.clone()),
-                    ))
-                }
-                Some(UrlType::Video(bvid)) => {
+                    })
+                    .collect()?;
+                    Ok(play_list)
+                },
+                Some(UrlType::Video(bvid)) =>{
                     let videos = self.0.request_video_info(&bvid).await?;
                     let play_list: VecDeque<BilibiliSourceItem> = videos
                         .into_iter()
                         .map(|p_info| BilibiliSourceItem {
                             bvid: bvid.clone(),
-                            cid: p_info,
+                            cid: p_info.cid,
                             pic: None,
                             title: p_info.part,
                             video_type,
                         })
                         .collect();
-                    Ok(BilibiliSourceStream::new(
-                        play_list,
-                        video_type.into(),
-                        dimension.into(),
-                        Arc::new(self.0.clone()),
-                    ))
+                    Ok(play_list)
+                },
+                None =>   Err(VideoSourceError::InvalidUrl(url.to_owned())) ,
+            }?;
+            for item in play_list {
+                let urls =  self.0.request_video_url(&item.bvid,item.cid,video_type.into(),dimension.into()).await?;
+                yield VideoInfo {
+                    title: item.title,
+                    pic: item.pic,
+                    video_type,
+                    dimension,
+                    video: urls.0,
+                    audio: urls.1,
                 }
-                None => Err(VideoSourceError::InvalidUrl(url.to_owned())),
+
             }
+
         })
     }
     fn valid(&self, url: &Url) -> bool {
@@ -633,78 +632,16 @@ pub struct BilibiliSourceItem {
     pub title: String,
     pub video_type: VideoType,
 }
-struct BilibiliSourceStream {
-    play_list: VecDeque<BilibiliSourceItem>,
-    video_type: VideoTypeCode,
-    dimension: DimensionCode,
-    client: Arc<BilibiliClient>,
-    future: Option<Pin<Box<dyn Future<Output = Result<VideoInfo>>>>>,
-}
-impl BilibiliSourceStream {
-    fn new(
-        play_list: VecDeque<BilibiliSourceItem>,
-        video_type: VideoTypeCode,
-        dimension: DimensionCode,
-        client: Arc<BilibiliClient>,
-    ) -> Self {
-        Self {
-            play_list,
-            video_type,
-            dimension,
-            client,
-            future: None,
-        }
-    }
-}
-impl Stream for BilibiliSourceStream {
-    type Item = Result<VideoInfo>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if let Some(future) = &mut self.future {
-            match future.as_mut().poll(cx) {
-                task::Poll::Ready(result) => {
-                    self.future = None;
-                    task::Poll::Ready(Some(result))
-                }
-                task::Poll::Pending => task::Poll::Pending,
-            }
-        } else {
-            if let Some(item) = self.play_list.pop_front() {
-                let client = self.client.clone();
-                let video_type = self.video_type;
-                let dimension = self.dimension;
-                let future = async move {
-                    let videos = client
-                        .request_video_url(&item.bvid, item.cid, video_type, dimension)
-                        .await;
-                    videos.map(|(video, audio)| VideoInfo {
-                        pic: item.pic,
-                        video_type: video_type.into(),
-                        title: item.title,
-                        dimension: dimension as i32,
-                        video,
-                        audio,
-                    })
-                };
-                self.future = Some(Box::pin(future));
-                cx.waker().wake_by_ref();
-                std::task::Poll::Pending
-            } else {
-                std::task::Poll::Ready(None)
-            }
-        }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (0, Some(self.play_list.len()))
-    }
-}
 
 #[cfg(test)]
 mod test {
-    use super::{BilibiliClient, BilibiliSource, REQUEST_VIDEO_INFO_URL};
+    use super::{
+        super::{VideoSource, VideoType},
+        BilibiliClient, BilibiliSource, DimensionCode, UrlType, VideoTypeCode,
+        REQUEST_VIDEO_INFO_URL,
+    };
     use crate::error::VideoSourceError;
-    use crate::source::bilibili::{DimensionCode, UrlType, VideoTypeCode};
+    use futures::StreamExt;
     use reqwest::{StatusCode, Url};
     use std::convert::TryInto;
 
@@ -865,5 +802,18 @@ mod test {
             ),
             None
         );
+    }
+    #[tokio::test]
+    async fn bilibili_source_video_type_test() {
+        let source = BilibiliSource::default();
+        let mut videos_info = source.video_list(
+            &Url::parse("https://www.bilibili.com/bangumi/media/md28229053").unwrap(),
+            VideoType::MP4,
+            32,
+        );
+        while let Some(video) = videos_info.next().await {
+            let video = video.unwrap();
+            println!("{:?}", video);
+        }
     }
 }

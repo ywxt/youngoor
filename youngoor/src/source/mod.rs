@@ -1,7 +1,7 @@
 pub mod bilibili;
 
 use crate::error::VideoSourceError;
-use futures::{future::BoxFuture, stream::BoxStream};
+use futures::stream::BoxStream;
 use reqwest::Url;
 
 pub type Result<T> = std::result::Result<T, VideoSourceError>;
@@ -9,12 +9,7 @@ pub type VideoInfoStream<'a> = BoxStream<'a, Result<VideoInfo>>;
 
 pub trait VideoSource {
     fn pretty_name(&self) -> &'static str;
-    fn video_list(
-        &self,
-        url: &Url,
-        video_type: VideoType,
-        dimension: i32,
-    ) -> BoxFuture<'_, Result<VideoInfoStream<'_>>>;
+    fn video_list(&self, url: &Url, video_type: VideoType, dimension: i32) -> VideoInfoStream<'_>;
     fn valid(&self, url: &Url) -> bool;
 
     fn set_token(&mut self, token: String);
@@ -48,9 +43,8 @@ macro_rules! video_sources {
 
 #[cfg(test)]
 mod test {
-    use super::{Result, VideoInfoStream, VideoSource, VideoType};
+    use super::{VideoInfoStream, VideoSource, VideoType};
     use reqwest::Url;
-    use futures::future::BoxFuture;
 
     #[test]
     fn video_sources_test() {
@@ -66,7 +60,7 @@ mod test {
                 url: &Url,
                 video_type: VideoType,
                 dimension: i32,
-            ) -> BoxFuture<'_, Result<VideoInfoStream<'_>>> {
+            ) -> VideoInfoStream<'_> {
                 unimplemented!()
             }
 
@@ -94,7 +88,7 @@ mod test {
                 url: &Url,
                 video_type: VideoType,
                 dimension: i32,
-            ) -> BoxFuture<'_, Result<VideoInfoStream<'_>>> {
+            ) -> VideoInfoStream<'_> {
                 unimplemented!()
             }
 
