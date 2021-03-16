@@ -57,9 +57,9 @@ mod test {
 
             fn video_list(
                 &self,
-                url: &Url,
-                video_type: VideoType,
-                dimension: i32,
+                _url: &Url,
+                _video_type: VideoType,
+                _dimension: i32,
             ) -> VideoInfoStream<'_> {
                 unimplemented!()
             }
@@ -85,9 +85,9 @@ mod test {
 
             fn video_list(
                 &self,
-                url: &Url,
-                video_type: VideoType,
-                dimension: i32,
+                _url: &Url,
+                _video_type: VideoType,
+                _dimension: i32,
             ) -> VideoInfoStream<'_> {
                 unimplemented!()
             }
