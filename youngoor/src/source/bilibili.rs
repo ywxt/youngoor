@@ -3,10 +3,9 @@ use crate::error::VideoSourceError;
 
 use reqwest::{header::COOKIE, RequestBuilder, StatusCode, Url};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::borrow::Borrow;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{Display, Formatter};
-
-use std::borrow::Borrow;
 
 const REQUEST_VIDEO_INFO_URL: &str = "https://api.bilibili.com/x/player/pagelist";
 const REQUEST_VIDEO_URL: &str = "https://api.bilibili.com/x/player/playurl";
@@ -69,8 +68,6 @@ impl VideoSource for BilibiliSource {
                   yield VideoInfo {
                       title: item.title,
                       pic: item.pic,
-                      video_type,
-                      dimension,
                       video: urls.0,
                       audio: urls.1,
                   }
@@ -93,8 +90,6 @@ impl VideoSource for BilibiliSource {
                  yield VideoInfo {
                      title: item.title,
                      pic: item.pic,
-                     video_type,
-                     dimension,
                      video: urls.0,
                      audio: urls.1,
                  }
@@ -113,6 +108,40 @@ impl VideoSource for BilibiliSource {
 
     fn token(&self) -> Option<&str> {
         self.0.token()
+    }
+
+    fn dimension(&self) -> Vec<(i32, String)> {
+        vec![
+            (
+                DimensionCode::P240.into(),
+                format!("{}", DimensionCode::P240),
+            ),
+            (
+                DimensionCode::P480.into(),
+                format!("{}", DimensionCode::P480),
+            ),
+            (
+                DimensionCode::P720.into(),
+                format!("{}", DimensionCode::P720),
+            ),
+            (
+                DimensionCode::P720F60.into(),
+                format!("{}", DimensionCode::P720F60),
+            ),
+            (
+                DimensionCode::P1080.into(),
+                format!("{}", DimensionCode::P1080),
+            ),
+            (
+                DimensionCode::P1080P.into(),
+                format!("{}", DimensionCode::P1080P),
+            ),
+            (
+                DimensionCode::P1080F60.into(),
+                format!("{}", DimensionCode::P1080F60),
+            ),
+            (DimensionCode::P4K.into(), format!("{}", DimensionCode::P4K)),
+        ]
     }
 }
 
@@ -436,6 +465,12 @@ impl From<i32> for DimensionCode {
             120 => Self::P4K,
             _ => Self::P720,
         }
+    }
+}
+
+impl From<DimensionCode> for i32 {
+    fn from(dimension: DimensionCode) -> Self {
+        dimension as Self
     }
 }
 

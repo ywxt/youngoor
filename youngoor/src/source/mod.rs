@@ -19,14 +19,14 @@ pub trait VideoSource {
 
     fn set_token(&mut self, token: String);
     fn token(&self) -> Option<&str>;
+
+    fn dimension(&self) -> Vec<(i32, String)>;
 }
 
 #[derive(Debug)]
 pub struct VideoInfo {
     pub pic: Option<Url>,
     pub title: String,
-    pub video_type: VideoType,
-    pub dimension: i32,
     pub video: Vec<Url>,
     pub audio: Vec<Url>,
 }
@@ -80,6 +80,10 @@ mod test {
             fn token(&self) -> Option<&str> {
                 unimplemented!()
             }
+
+            fn dimension(&self) -> Vec<(i32, String)> {
+                unimplemented!()
+            }
         }
         #[derive(Default)]
         struct VideoSource2;
@@ -106,6 +110,10 @@ mod test {
             }
 
             fn token(&self) -> Option<&str> {
+                unimplemented!()
+            }
+
+            fn dimension(&self) -> Vec<(i32, String)> {
                 unimplemented!()
             }
         }
