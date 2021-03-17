@@ -35,65 +35,73 @@ impl VideoSource for BilibiliSource {
         "bilibili"
     }
 
-    fn video_list(&self, url: &Url, video_type: VideoType, dimension: i32) -> VideoInfoStream<'_> {
+    fn video_list(
+        &self,
+        url: &Url,
+        video_type: VideoType,
+        dimension: i32,
+    ) -> Result<VideoInfoStream<'_>> {
         use async_stream::try_stream;
-        let url = url.clone();
-        Box::pin(try_stream! {
-            let play_list =  match Self::url_type(&url) {
-                Some(UrlType::Bangumi(media_id)) =>{
-                    use std::iter::IntoIterator;
-                    use std::iter::Iterator;
-                    let ssid = self.0.request_bangumi_ssid(media_id).await?;
-                    let episodes = self.0.request_bangumi_info(ssid).await?;
-                    let play_list: VecDeque<BilibiliSourceItem> = episodes
-                    .into_iter()
-                    .map(|episode| {
-                        Ok::<_,VideoSourceError>(BilibiliSourceItem {
-                            bvid: episode.bvid.clone(),
-                            cid: episode.cid,
-                            pic: Some(Url::parse(&episode.cover).map_err(|_| {
-                                VideoSourceError::InvalidApiData(format!(
-                                    "视频地址错误: bvid={},cid={}",
-                                    episode.bvid, episode.cid
-                                ))
-                            })?),
-                            title: format!("{} {}",episode.title, episode.long_title),
-                            video_type,
-                        })
-                    })
-                    .collect()?;
-                    Ok(play_list)
-                },
-                Some(UrlType::Video(bvid)) =>{
-                    let videos = self.0.request_video_info(&bvid).await?;
-                    let play_list: VecDeque<BilibiliSourceItem> = videos
-                        .into_iter()
-                        .map(|p_info| BilibiliSourceItem {
-                            bvid: bvid.clone(),
-                            cid: p_info.cid,
-                            pic: None,
-                            title: p_info.part,
-                            video_type,
-                        })
-                        .collect();
-                    Ok(play_list)
-                },
-                None =>   Err(VideoSourceError::InvalidUrl(url.to_owned())) ,
-            }?;
-            for item in play_list {
-                let urls =  self.0.request_video_url(&item.bvid,item.cid,video_type.into(),dimension.into()).await?;
-                yield VideoInfo {
-                    title: item.title,
-                    pic: item.pic,
-                    video_type,
-                    dimension,
-                    video: urls.0,
-                    audio: urls.1,
-                }
 
-            }
-
-        })
+        match Self::url_type(&url) {
+            Some(UrlType::Bangumi(media_id)) => Ok(Box::pin(try_stream! {
+              let ssid = self.0.request_bangumi_ssid(media_id).await?;
+              let episodes = self.0.request_bangumi_info(ssid).await?;
+              let play_list: VecDeque<BilibiliSourceItem> = episodes
+              .into_iter()
+              .map(|episode| {
+                  Ok::<_,VideoSourceError>(BilibiliSourceItem {
+                      bvid: episode.bvid.clone(),
+                      cid: episode.cid,
+                      pic: Some(Url::parse(&episode.cover).map_err(|_| {
+                          VideoSourceError::InvalidApiData(format!(
+                              "视频地址错误: bvid={},cid={}",
+                              episode.bvid, episode.cid
+                          ))
+                      })?),
+                      title: format!("{} {}",episode.title, episode.long_title),
+                      video_type,
+                  })
+              })
+              .collect()?;
+              for item in play_list {
+                  let urls =  self.0.request_video_url(&item.bvid,item.cid,video_type.into(),dimension.into()).await?;
+                  yield VideoInfo {
+                      title: item.title,
+                      pic: item.pic,
+                      video_type,
+                      dimension,
+                      video: urls.0,
+                      audio: urls.1,
+                  }
+              }
+            })),
+            Some(UrlType::Video(bvid)) => Ok(Box::pin(try_stream! {
+              let videos = self.0.request_video_info(&bvid).await?;
+              let play_list: VecDeque<BilibiliSourceItem> = videos
+                .into_iter()
+                .map(|p_info| BilibiliSourceItem {
+                     bvid: bvid.clone(),
+                     cid: p_info.cid,
+                     pic: None,
+                     title: p_info.part,
+                     video_type,
+                })
+                .collect();
+              for item in play_list {
+                 let urls =  self.0.request_video_url(&item.bvid,item.cid,video_type.into(),dimension.into()).await?;
+                 yield VideoInfo {
+                     title: item.title,
+                     pic: item.pic,
+                     video_type,
+                     dimension,
+                     video: urls.0,
+                     audio: urls.1,
+                 }
+             }
+            })),
+            None => Err(VideoSourceError::InvalidUrl(url.to_owned())),
+        }
     }
     fn valid(&self, url: &Url) -> bool {
         Self::url_type(url).is_some()
@@ -806,11 +814,13 @@ mod test {
     #[tokio::test]
     async fn bilibili_source_video_type_test() {
         let source = BilibiliSource::default();
-        let mut videos_info = source.video_list(
-            &Url::parse("https://www.bilibili.com/bangumi/media/md28229053").unwrap(),
-            VideoType::MP4,
-            32,
-        );
+        let mut videos_info = source
+            .video_list(
+                &Url::parse("https://www.bilibili.com/bangumi/media/md28229053").unwrap(),
+                VideoType::MP4,
+                32,
+            )
+            .unwrap();
         while let Some(video) = videos_info.next().await {
             let video = video.unwrap();
             println!("{:?}", video);
